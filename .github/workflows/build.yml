@@ -1,5 +1,5 @@
 name: Build Stockfish for Android (ARM64)
-
+ 
 on:
   push:
     branches: [main]
