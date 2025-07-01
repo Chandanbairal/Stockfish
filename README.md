@@ -1,4 +1,4 @@
-<div align="center">
+<div align="center"> 
 
   [![Stockfish][stockfish128-logo]][website-link]
 
