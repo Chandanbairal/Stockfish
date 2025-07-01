@@ -1,0 +1,38 @@
+name: Build Stockfish for Android (ARM64)
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Compile for Android ARM64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential wget unzip python3 git cmake ninja-build
+
+      - name: Download Android NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+          unzip android-ndk-r25b-linux.zip
+          mv android-ndk-r25b $HOME/ndk
+
+      - name: Build Stockfish binary for armv8
+        env:
+          NDK_ROOT: $HOME/ndk
+        run: |
+          make build ARCH=armv8 NDK=$NDK_ROOT
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: Stockfish_6Move_bin
+          path: ./stockfish
+          
