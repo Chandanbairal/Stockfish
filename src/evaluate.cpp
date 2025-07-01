@@ -36,55 +36,59 @@
 #include "nnue/nnue_accumulator.h"
 
 namespace Stockfish {
-
+// Custom Point Chess piece values
+constexpr int PointChessValues[PIECE_TYPE_NB] = {0, 100, 300, 300, 500, 900, 0}; // None, Pawn, Knight, Bishop, Rook, Queen, King
 // Returns a static, purely materialistic evaluation of the position from
 // the point of view of the side to move. It can be divided by PawnValue to get
 // an approximation of the material advantage on the board in terms of pawns.
 int Eval::simple_eval(const Position& pos) {
-    Color c = pos.side_to_move();
-    return PawnValue * (pos.count<PAWN>(c) - pos.count<PAWN>(~c))
-         + (pos.non_pawn_material(c) - pos.non_pawn_material(~c));
+    int material = 0;
+    for (PieceType pt = PAWN; pt <= QUEEN; ++pt) {
+        material += PointChessValues[pt] * (pos.count(pt, WHITE) - pos.count(pt, BLACK));
+    }
+    return material;
 }
 
 bool Eval::use_smallnet(const Position& pos) { return std::abs(simple_eval(pos)) > 962; }
 
 // Evaluate is the evaluator for the outer world. It returns a static evaluation
 // of the position from the point of view of the side to move.
-Value Eval::evaluate(const Eval::NNUE::Networks&    networks,
-                     const Position&                pos,
-                     Eval::NNUE::AccumulatorStack&  accumulators,
+Value Eval::evaluate(const Eval::NNUE::Networks& networks,
+                     const Position& pos,
+                     Eval::NNUE::AccumulatorStack& accumulators,
                      Eval::NNUE::AccumulatorCaches& caches,
-                     int                            optimism) {
-
+                     int optimism)
+{
     assert(!pos.checkers());
 
-    bool smallNet           = use_smallnet(pos);
-    auto [psqt, positional] = smallNet ? networks.small.evaluate(pos, accumulators, &caches.small)
-                                       : networks.big.evaluate(pos, accumulators, &caches.big);
+    // First check for checkmate
+    if (pos.is_checkmate())
+        return pos.side_to_move() == WHITE ? VALUE_MATE : -VALUE_MATE;
 
-    Value nnue = (125 * psqt + 131 * positional) / 128;
-
-    // Re-evaluate the position when higher eval accuracy is worth the time spent
-    if (smallNet && (std::abs(nnue) < 236))
-    {
-        std::tie(psqt, positional) = networks.big.evaluate(pos, accumulators, &caches.big);
-        nnue                       = (125 * psqt + 131 * positional) / 128;
-        smallNet                   = false;
+    // Calculate material difference using Point Chess values
+    int material = 0;
+    for (PieceType pt = PAWN; pt <= QUEEN; ++pt) {
+        material += PointChessValues[pt] * (pos.count(pt, WHITE) - pos.count(pt, BLACK));
     }
 
-    // Blend optimism and eval with nnue complexity
-    int nnueComplexity = std::abs(psqt - positional);
-    optimism += optimism * nnueComplexity / 468;
-    nnue -= nnue * nnueComplexity / 18000;
+    // Reward captures and safe exchanges
+    int captureBonus = 0;
+    for (Move m : pos.captures()) {
+        PieceType captured = type_of(pos.piece_on(to_sq(m)));
+        PieceType attacker = type_of(pos.moved_piece(m));
+        if (PointChessValues[attacker] <= PointChessValues[captured]) {
+            captureBonus += PointChessValues[captured] * 2; // Double value for good captures
+        }
+    }
 
-    int material = 535 * pos.count<PAWN>() + pos.non_pawn_material();
-    int v        = (nnue * (77777 + material) + optimism * (7777 + material)) / 77777;
+    // Get original NNUE evaluation (keep some positional awareness)
+    bool smallNet = use_smallnet(pos);
+    auto [psqt, positional] = smallNet ? networks.small.evaluate(pos, accumulators, caches.small)
+                                       : networks.big.evaluate(pos, accumulators, caches.big);
+    Value nnue = (125 * psqt + 131 * positional) / 128;
 
-    // Damp down the evaluation linearly when shuffling
-    v -= v * pos.rule50_count() / 212;
-
-    // Guarantee evaluation does not hit the tablebase range
-    v = std::clamp(v, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
+    // Combine evaluations with heavy weight on material
+    int v = (material * 1000) + (captureBonus * 500) + nnue;
 
     return v;
 }
